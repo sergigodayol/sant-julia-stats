@@ -5,135 +5,113 @@ import google.generativeai as genai
 # 1. CONFIGURACIÓN DE PÁGINA E IA
 st.set_page_config(page_title="IA Analista CF Sant Julià", layout="wide", page_icon="⚽")
 
-# SUSTITUYE AQUÍ TU API KEY
+# TU API KEY INTEGRADA
 genai.configure(api_key='AIzaSyCIdKeOwc0mEPR38_2BIDNbXekk413GxE4')
 model = genai.GenerativeModel('gemini-1.5-flash')
 
-# ID de tu documento
+# ID de tu documento de Google Sheets
 SHEET_ID = '1CB3J-6sIzuWxUzCqFARUIoYySyj-dlyuSNkuDu5DMbo'
 
-# 2. GENERACIÓN DE LISTA DE TEMPORADAS
-# Creamos la lista: T 11-12, T 12-13... hasta T 25-26 + la Global
+# 2. GENERACIÓN DE LISTA DE TEMPORADAS (T 11-12 hasta T 25-26 + Global)
 temporadas_lista = [f"T {i}-{i+1}" for i in range(11, 25)]
 temporadas_lista.append("T 25-26")
 opciones_pestañas = ["JUGADORS (GLOBALS)"] + temporadas_lista
 
-# 3. LÓGICA DE CARGA DE DATOS
-st.sidebar.title("Configuración")
-pestaña_seleccionada = st.sidebar.selectbox("Selecciona Temporada o Global:", opciones_pestañas)
+# Menú lateral
+st.sidebar.image("https://cdn-icons-png.flaticon.com/512/53/53283.png", width=100)
+st.sidebar.title("CF Sant Julià")
+pestaña_seleccionada = st.sidebar.selectbox("📅 Selecciona Temporada:", opciones_pestañas)
 
+# 3. FUNCIÓN PARA CARGAR Y LIMPIAR DATOS
 @st.cache_data
 def load_data(sheet_name):
-    # Formateamos el nombre para la URL (espacios por %20)
     sheet_name_csv = sheet_name.replace(" ", "%20")
     url = f'https://docs.google.com/spreadsheets/d/{SHEET_ID}/gviz/tq?tqx=out:csv&sheet={sheet_name_csv}'
     try:
         data = pd.read_csv(url)
-        # Limpieza rápida: quitar columnas vacías si las hay
-        data = data.dropna(axis=1, how='all')
-        return data
-    except:
-        return None
+        
+        # Filtramos solo las columnas de interés para evitar los "None" de la derecha
+        cols_interes = ['JUGADOR', 'PARTITS JUGATS', 'GOLS', 'TG', 'TV', 'G/P']
+        existentes = [c for c in cols_interes if c in data.columns]
+        
+        # Limpiamos: Solo filas donde haya nombre de jugador y solo columnas principales
+        df_limpio = data[existentes].dropna(subset=['JUGADOR'])
+        
+        # Extraer métricas generales del equipo si existen en la hoja (PJ, PG, PE, PP, GF, GC)
+        metrics_cols = ['PJ', 'PG', 'PE', 'PP', 'GF', 'GC']
+        df_metrics = data[[c for c in metrics_cols if c in data.columns]].dropna().iloc[:1] if any(c in data.columns for c in metrics_cols) else None
+        
+        return df_limpio, df_metrics
+    except Exception as e:
+        return None, None
 
-df = load_data(pestaña_seleccionada)
+df, df_metrics = load_data(pestaña_seleccionada)
 
 # 4. INTERFAZ PRINCIPAL
-st.title(f"⚽ Analista IA: {pestaña_seleccionada}")
+st.title(f"📊 Analista IA: {pestaña_seleccionada}")
 
-if df is not None:
-    # Métricas destacadas del equipo según la pestaña
-    if pestaña_seleccionada == "JUGADORS (GLOBALS)":
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Partidos Totales", "412")
-        col2.metric("Goles Históricos", "872")
-        col3.metric("Victorias", "189")
+if df is not None and not df.empty:
+    # Mostrar Resumen del Equipo en tarjetas si hay datos disponibles
+    if df_metrics is not None and not df_metrics.empty:
+        st.subheader("📈 Rendimiento Colectivo")
+        m1, m2, m3, m4, m5, m6 = st.columns(6)
+        m1.metric("PJ", int(df_metrics.iloc[0].get('PJ', 0)))
+        m2.metric("PG", int(df_metrics.iloc[0].get('PG', 0)))
+        m3.metric("PE", int(df_metrics.iloc[0].get('PE', 0)))
+        m4.metric("PP", int(df_metrics.iloc[0].get('PP', 0)))
+        m5.metric("GF", int(df_metrics.iloc[0].get('GF', 0)))
+        m6.metric("GC", int(df_metrics.iloc[0].get('GC', 0)))
     
     st.divider()
 
-    # Buscador de Jugador
-    st.subheader("🔍 Ficha Individual de Jugador")
-    lista_jugadores = sorted(df['JUGADOR'].dropna().unique())
-    jugador_sel = st.selectbox("Busca un jugador:", lista_jugadores)
+    # Buscador de Jugador Individual
+    st.subheader("🔍 Consulta de Jugador")
+    lista_jugadores = sorted(df['JUGADOR'].unique())
+    jugador_sel = st.selectbox("Busca un jugador para ver su histórico en este periodo:", lista_jugadores)
     
-    datos_jugador = df[df['JUGADOR'] == jugador_sel].iloc[0]
-    
+    # Datos del jugador seleccionado
+    datos_j = df[df['JUGADOR'] == jugador_sel].iloc[0]
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Partidos", datos_jugador.get('PARTITS JUGATS', 0))
-    c2.metric("Goles", datos_jugador.get('GOLS', 0))
-    c3.metric("Amarillas", datos_jugador.get('TG', 0))
-    c4.metric("Promedio G/P", datos_jugador.get('G/P', 0))
+    c1.metric("Partidos", datos_j.get('PARTITS JUGATS', 0))
+    c2.metric("Goles", datos_j.get('GOLS', 0))
+    c3.metric("Tarjetas Amarillas", datos_j.get('TG', 0))
+    c4.metric("Promedio G/P", datos_j.get('G/P', 0))
 
     st.divider()
 
-    # EL AGENTE DE IA
-    st.subheader(f"🤖 Pregunta a la IA sobre {pestaña_seleccionada}")
-    st.info("La IA analizará los datos de la temporada seleccionada para responderte.")
+    # 5. EL AGENTE DE IA (EL CEREBRO)
+    st.subheader("🤖 Agente Analista Inteligente")
+    st.write("Pregunta cualquier cosa sobre los datos de esta temporada (Ej: ¿Quién es el máximo goleador? o ¿Quién tiene más tarjetas?)")
     
-    pregunta = st.text_input("Ejemplo: ¿Quién es el más eficiente goleador de este periodo?")
+    pregunta = st.text_input("Introduce tu pregunta aquí:")
     
     if pregunta:
-        # Enviamos los datos actuales a la IA como contexto
-        contexto = df.to_string()
+        # Convertimos la tabla a texto para que la IA la "lea"
+        contexto_ia = df.to_string(index=False)
         prompt = f"""
-        Eres el Director Deportivo del CF Sant Julià. 
-        Analiza estos datos de la temporada {pestaña_seleccionada}:
-        {contexto}
+        Actúa como el analista jefe del club de fútbol CF Sant Julià. 
+        Utiliza exclusivamente estos datos de la temporada {pestaña_seleccionada} para responder:
         
-        Pregunta del usuario: {pregunta}
+        {contexto_ia}
+        
+        Pregunta: {pregunta}
+        Respuesta (sé profesional y directo):
         """
         
-        with st.spinner('Pensando como analista...'):
-            response = model.generate_content(prompt)
-            st.write("---")
-            st.markdown(response.text)
+        with st.spinner('Analizando estadísticas con IA...'):
+            try:
+                response = model.generate_content(prompt)
+                st.info(response.text)
+            except Exception as e:
+                st.error("La IA está ocupada. Inténtalo de nuevo en un momento.")
 
     st.divider()
-    # Tabla completa
-    with st.expander("Ver tabla completa de datos"):
+    # Tabla de datos limpia
+    with st.expander("📂 Ver base de datos completa"):
         st.dataframe(df, use_container_width=True)
 
 else:
-    st.error(f"No se pudo cargar la pestaña '{pestaña_seleccionada}'. Revisa que el nombre sea exacto en Google Sheets.")
+    st.error("No se han podido cargar los datos. Verifica que el nombre de la pestaña en Google Sheets sea correcto.")
 
 st.sidebar.markdown("---")
-st.sidebar.write("Desarrollado con Streamlit + Google Gemini")
-
-
-
-
-
-import streamlit as st
-import pandas as pd
-import google.generativeai as genai
-
-# Configuración de la página
-st.set_page_config(page_title="Dashboard CF Sant Julià", layout="wide")
-
-# Sustituye 'TU_API_KEY_AQUÍ' por la clave que guardaste
-genai.configure(api_key='AIzaSyCIdKeOwc0mEPR38_2BIDNbXekk413GxE4')
-
-# URL de tu Google Sheet (formato export para que Python lo lea directo)
-# Reemplaza el ID largo por el de tu documento
-SHEET_ID = '1CB3J-6sIzuWxUzCqFARUIoYySyj-dlyuSNkuDu5DMbo'
-URL = f'https://docs.google.com/spreadsheets/d/1CB3J-6sIzuWxUzCqFARUIoYySyj-dlyuSNkuDu5DMbo/export?format=csv'
-
-@st.cache_data
-def load_data():
-    df = pd.read_csv(URL)
-    return df
-
-df = load_data()
-
-st.title("⚽ Panel de Análisis CF Sant Julià")
-st.write("Datos sincronizados en tiempo real desde Google Sheets.")
-
-# Mostrar métricas generales del equipo
-col1, col2, col3 = st.columns(3)
-with col1:
-    st.metric("Partidos Jugados", "412") # Dato de tu tabla I1:N2
-with col2:
-    st.metric("Goles Totales", "872")    # Dato de tu tabla I1:N2
-with col3:
-    st.metric("Victorias", "189")       # Dato de tu tabla I1:N2[cite: 1]
-
-st.dataframe(df)
+st.sidebar.caption("Ingeniería de Datos aplicada al CF Sant Julià")
